@@ -10,7 +10,7 @@ namespace RedditClient
     {
         private const string BASE_URL = "http://www.reddit.com{0}.json?limit={1}";
 
-        private const string ANNOUNCEMENT_URL = "http://mabako.net/reddit-for-city-skylines/v{0}.txt";
+        // private const string ANNOUNCEMENT_URL = "http://mabako.net/reddit-for-city-skylines/v{0}.txt";
 
         public static IEnumerable<RedditPost> FindLastPosts(string subreddit)
         {
@@ -46,7 +46,8 @@ namespace RedditClient
             }
         }
 
-        public static string GetAnnouncement()
+/*        public static string GetAnnouncement()
+ *        
         {
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(string.Format(ANNOUNCEMENT_URL, ModInfo.Version));
             request.Method = WebRequestMethods.Http.Get;
@@ -61,7 +62,7 @@ namespace RedditClient
                     return sr.ReadLine();
                 }
             }
-        }
+        }*/
 
         private static RedditPost createPost(JsonObject data)
         {
