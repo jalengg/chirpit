@@ -1,49 +1,118 @@
 ﻿using SimpleJson;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
+using UnityEngine;
+
 
 namespace RedditClient
 {
     internal class TinyWeb
     {
-        private const string BASE_URL = "http://www.reddit.com{0}.json?limit={1}";
+        private string ACCESS_TOKEN = null;
+        private string BASE_URL = null;
+        private string DEVICE_ID = null;
 
-        // private const string ANNOUNCEMENT_URL = "http://mabako.net/reddit-for-city-skylines/v{0}.txt";
-
-        public static IEnumerable<RedditPost> FindLastPosts(string subreddit)
+        public TinyWeb()
         {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(string.Format(BASE_URL, subreddit, RedditUpdater.MAX_REDDIT_POSTS_PER_SUBREDDIT));
-            request.Method = WebRequestMethods.Http.Get;
-            request.Accept = "text/json";
+            this.DEVICE_ID = genDeviceId();
+            this.BASE_URL = "http://www.reddit.com{0}.json?limit={1}";
+            JsonObject accessTokenResponse = PostString(getAuthCurlString());
+            this.ACCESS_TOKEN = (string)accessTokenResponse["access_token"];
+            // UnityEngine.Debug.Log(string.Format("Reddit ACCESS TOKEN IS {0}", ACCESS_TOKEN));
+            
+        }
+        private String getAuthCurlString()
+        {
+            return string.Format(
+                            "-s --location {0} --header 'User-Agent: win64:chirpit:/u/jalen1' --header \"{1}\" --header \"{2}\" --data-urlencode \"{3}\" --data-urlencode \"{4}\"",
+                            "https://www.reddit.com/api/v1/access_token",
+                            "Authorization: Basic NktLR1YyMUlCelRPQ1YycmczYkFCZzo=",
+                            "Content-Type: application/x-www-form-urlencoded",
+                            "grant_type=https://oauth.reddit.com/grants/installed_client",
+                            string.Format("device_id={0}", this.DEVICE_ID)
+                        );
+        }
+        private static string genDeviceId()
+        {
+            var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            var stringChars = new char[25];
+            var random = new System.Random();
 
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            for (int i = 0; i < stringChars.Length; i++)
             {
-                if (response.StatusCode != HttpStatusCode.OK)
-                    return null;
+                stringChars[i] = chars[random.Next(chars.Length)];
+            }
 
-                using (var sr = new StreamReader(response.GetResponseStream()))
+            var finalString = new String(stringChars);
+            return finalString;
+        }
+
+        public static JsonObject PostString(string args)
+        {
+            Process p = null;
+            try
+            {
+                UnityEngine.Debug.Log(args);
+                var psi = new ProcessStartInfo
                 {
-                    string str = sr.ReadToEnd();
+                    FileName = "curl",
+                    Arguments = args,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
 
-                    JsonObject root = (JsonObject)SimpleJson.SimpleJson.DeserializeObject(str);
-                    JsonObject rootData = (JsonObject)root["data"];
-                    JsonArray rootChildren = (JsonArray)rootData["children"];
-
-                    var list = new List<RedditPost>();
-                    foreach (object obj in rootChildren)
-                    {
-                        JsonObject child = (JsonObject)obj;
-                        JsonObject data = (JsonObject)child["data"];
-
-                        var post = createPost(data);
-                        if (post != null)
-                            list.Add(post);
-                    }
-                    return list;
+                p = Process.Start(psi);
+                string readString = p.StandardOutput.ReadToEnd();
+                // UnityEngine.Debug.Log(readString);
+                return (JsonObject)SimpleJson.SimpleJson.DeserializeObject(readString);
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (p != null && p.HasExited == false)
+                {
+                    p.Kill();
                 }
             }
+        }
+
+
+        public IEnumerable<RedditPost> FindLastPosts(string subreddit)
+        {
+
+            string args = string.Format("-s --location http://www.reddit.com{0}.json?limit=5 --header 'User-Agent: win64:chirpit:/u/jalen1' --header 'Authorization: Bearer '{1}''", subreddit, this.ACCESS_TOKEN);
+
+            JsonObject response = PostString(args);
+
+
+            JsonObject responseData = (JsonObject)response["data"];
+            JsonArray responseChildren = (JsonArray)responseData["children"];
+
+            if ( responseChildren.Count == 0)
+            {
+                return null;
+            }
+
+            var list = new List<RedditPost>();
+            foreach (object obj in responseChildren)
+            {
+                JsonObject child = (JsonObject)obj;
+                JsonObject data = (JsonObject)child["data"];
+                UnityEngine.Debug.Log(data.ToString());
+                var post = createPost(data);
+                if (post != null)
+                    list.Add(post);
+            }
+            return list;
+            
+            
         }
 
 /*        public static string GetAnnouncement()
@@ -77,9 +146,12 @@ namespace RedditClient
             if (sticky is Boolean)
                 if ((Boolean)sticky == true)
                     return null;
-
+            string postText = data["title"].ToString();
+            string selfText = data["selftext"].ToString();
+            if (selfText.Length > 0 && postText.Length + selfText.Length <= 240)
+                postText += ": " + selfText;
             // create post object
-            var post = new RedditPost { id = data["id"].ToString(), title = data["title"].ToString(), author = data["author"].ToString(), subreddit = data["subreddit"].ToString() };
+            var post = new RedditPost { id = data["id"].ToString(), title = postText, author = data["author"].ToString(), subreddit = data["subreddit"].ToString() };
 
             // does it have a flair?
             var flair = data["link_flair_text"];

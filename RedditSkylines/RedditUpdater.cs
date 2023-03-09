@@ -1,9 +1,10 @@
 ﻿using ColossalFramework;
-using ColossalFramework.Steamworks;
+using ColossalFramework.PlatformServices;
 using ColossalFramework.UI;
 using ICities;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Timers;
@@ -17,13 +18,15 @@ namespace RedditClient
         public const int MAX_CACHED_REDDIT_POSTS_PER_SUBREDDIT = 50;
 
         private System.Timers.Timer timer = new System.Timers.Timer();
+        private System.Timers.Timer postfactoryRefreshTimer = new System.Timers.Timer();
         private Dictionary<string, Queue<string>> lastPostIds = new Dictionary<string, Queue<string>>();
 
         private AudioClip messageSound = null;
-        private bool checkedAnnouncement = false;
+        //private bool checkedAnnouncement = false;
 
         private CitizenMessage lastCitizenMessage = null;
         public Message lastRedditMessage = null;
+        private TinyWeb postFactory = null;
 
         private bool IsPaused
         {
@@ -35,17 +38,26 @@ namespace RedditClient
 
         public override void OnCreated(IChirper threading)
         {
+                this.postFactory = new TinyWeb();
+                messageSound = Singleton<ChirpPanel>.instance.m_NotificationSound;
             try
             {
-                messageSound = Singleton<ChirpPanel>.instance.m_NotificationSound;
+                Configuration.SetSubredditList(File.ReadAllText(ModInfo.ConfigPath));
+            }
+            catch
+            {
+                Configuration.CreateConfig();
+            }
 
-                Configuration.Load();
+
                 if (Configuration.Subreddits.Count >= 1)
                 {
-                    DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Message, string.Format("Going to show a new message from one of {0} subreddits every {1} seconds (AssociationMode = {2})", Configuration.Subreddits.Count, Configuration.TimerInSeconds, Configuration.AssociationMode));
-
+                    Debug.Log(string.Format("Reddit. Going to show a new message from one of {0} subreddits every {1} seconds (AssociationMode = {2})", Configuration.Subreddits.Count, Configuration.TimerInSeconds, Configuration.AssociationMode));
+                    Debug.Log(string.Format("Reddit. list of subs loaded: {0}", Configuration.Subreddits.ToString()));
                     foreach (string subreddit in Configuration.Subreddits)
                     {
+
+                        Debug.Log(string.Format("reddit loaded subreddit: {0}", subreddit));
                         if (!lastPostIds.ContainsKey(subreddit))
                             lastPostIds.Add(subreddit, new Queue<string>());
                     }
@@ -54,22 +66,25 @@ namespace RedditClient
                     timer.Elapsed += new ElapsedEventHandler((sender, e) => UpdateRedditPosts());
                     timer.Interval = Configuration.TimerInSeconds * 1000;
                     timer.Start();
+
+                    postfactoryRefreshTimer.AutoReset = true;
+                    postfactoryRefreshTimer.Elapsed += new ElapsedEventHandler((sender, e) => { this.postFactory = new TinyWeb();  });
+                    postfactoryRefreshTimer.Interval = 5 * 60 * 1000;
+                    postfactoryRefreshTimer.Start();
                 }
                 else
                 {
-                    DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Message, "No subreddits configured.");
+                    Debug.Log("No subreddits configured.");
                 }
-            }
-            catch (Exception e)
-            {
-                DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Error, string.Format("[Reddit] {0}: {1}", e.GetType(), e.Message));
-            }
+            
         }
 
         public override void OnReleased()
         {
             timer.Stop();
             timer.Dispose();
+            postfactoryRefreshTimer.Stop();
+            postfactoryRefreshTimer.Dispose();
 
             ChirpPanel cp = ChirpPanel.instance;
             if (cp != null)
@@ -79,15 +94,23 @@ namespace RedditClient
         private void UpdateRedditPosts()
         {
             if (IsPaused)
+            {
+                Debug.Log("[Reddit] called UpdateRedditPosts function but game was paused.");
                 return;
+            }
 
+            Debug.Log("[Reddit] called UpdateRedditPosts function");
             // Possibly important messages
-            if (CheckAnnouncement())
-                return;
+            // if (CheckAnnouncement())
+            //     return;
 
             // Pick a subreddit at random
             string subreddit = Configuration.Subreddits[new System.Random().Next(Configuration.Subreddits.Count)];
 
+            if (subreddit.EndsWith("/"))
+                subreddit = subreddit.Substring(0, subreddit.Length - 1);
+
+            Debug.Log(string.Format("[Reddit] picked subreddit at random: {0}", subreddit));
             try
             {
                 // Remove posts that are no longer checked against; plus some for possible deletions
@@ -96,7 +119,7 @@ namespace RedditClient
                     lastPostId.Dequeue();
 
                 // Fetch a number of latest posts
-                IEnumerable<RedditPost> newestPosts = TinyWeb.FindLastPosts(subreddit);
+                IEnumerable<RedditPost> newestPosts = postFactory.FindLastPosts(subreddit);
                 foreach (RedditPost newestPost in newestPosts)
                 {
                     // Find the first one we haven't shown yet
@@ -110,9 +133,9 @@ namespace RedditClient
                     }
                 }
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                // DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Message, string.Format("[Reddit {0}] {1}: {2}", subreddit, e.GetType().ToString(), e.Message));
+                Debug.Log(string.Format("[Reddit {0}] {1}: {2}", subreddit, e.GetType().ToString(), e.Message));
             }
         }
 
@@ -178,7 +201,7 @@ namespace RedditClient
                     catch
                     {
                         // not sure if this would happen often. Who knows.
-                        // DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Message, string.Format("[Reddit] Failed to pick random citizen name for {0}", name));
+                        Debug.Log(string.Format("[Reddit] Failed to pick random citizen name for {0}", name));
                     }
                 }
             }
@@ -188,35 +211,6 @@ namespace RedditClient
             return new CitizenInfo { Name = name };
         }
 
-        private bool CheckAnnouncement()
-        {
-            if (checkedAnnouncement)
-                return false;
-
-            checkedAnnouncement = true;
-
-            try
-            {
-                string announcement = TinyWeb.GetAnnouncement();
-                if (announcement != null && announcement.Length > 2)
-                {
-                    announcement = announcement.Trim();
-
-                    if (Configuration.LastAnnouncement == announcement.GetHashCode())
-                        return false;
-
-                    Configuration.LastAnnouncement = announcement.GetHashCode();
-                    Configuration.SaveConfig(false);
-
-                    AddMessage(new Message("Reddit for Chirpy", "Update", announcement, 0, "2z87if"));
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-            return false;
-        }
 
         private void AddMessage(Message m)
         {
@@ -244,7 +238,7 @@ namespace RedditClient
             CitizenMessage cm = message as CitizenMessage;
             if (cm != null)
             {
-                // DebugOutputPanel.AddMessage(ColossalFramework.Plugins.PluginManager.MessageType.Message, string.Format("Reddit | CitizenMessage {0} {1}", cm.m_messageID, cm.m_keyID));
+                Debug.Log(string.Format("Reddit | CitizenMessage {0} {1}", cm.m_messageID, cm.m_keyID));
                 if (ShouldFilter(cm.m_messageID))
                 {
                     ChirpPanel.instance.m_NotificationSound = null;
@@ -269,7 +263,7 @@ namespace RedditClient
                 {
                     case 0:
                         // Open Steam Overlay
-                        Steam.ActivateGameOverlayToWebPage(url);
+                        PlatformService.ActivateGameOverlayToWebPage(url);
                         break;
 
                     case 1:
@@ -333,10 +327,12 @@ namespace RedditClient
                 return;
 
             // This code is roughly based on the work by Juuso "Zuppi" Hietala.
+            Debug.Log("REDDIT: Calling OnUpdate");
             var container = ChirpPanel.instance.transform.FindChild("Chirps").FindChild("Clipper").FindChild("Container").gameObject.transform;
             for (int i = 0; i < container.childCount; ++i)
             {
                 var elem = container.GetChild(i);
+                Debug.Log(string.Format("Looping through child {0}: {1}", i, elem.ToString()));
                 var label = elem.GetComponentInChildren<UILabel>();
                 if (lastRedditMessage != null)
                 {

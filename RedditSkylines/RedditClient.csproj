@@ -61,7 +61,7 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
-    <PostBuildEvent>set CS_MOD_FOLDER=%25LOCALAPPDATA%25\Colossal Order\Cities_Skylines\Addons\Mods\
+    <PostBuildEvent>set CS_MOD_FOLDER=%25LOCALAPPDATA%25\Colossal Order\Cities_Skylines\Addons\Mods
 set PROJECT_MOD_FOLDER=%25CS_MOD_FOLDER%25\$(SolutionName)\
 if not exist "%25PROJECT_MOD_FOLDER%25" mkdir "%25PROJECT_MOD_FOLDER%25"
 copy /y "$(TargetPath)" "%25PROJECT_MOD_FOLDER%25"
