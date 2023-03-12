@@ -20,7 +20,7 @@ namespace RedditClient
 
         public static int Version
         {
-            get { return 10; }
+            get { return 11; }
         }
         public static string ConfigPath
         {
@@ -37,28 +37,22 @@ namespace RedditClient
             }
         }
 
-        private void OpenConfigFile()
+        private void OpenConfigFile(ChirpitConfig config)
         {
             string tmppath = ConfigPath;
-            if (System.IO.File.Exists(tmppath))
-            {
-                System.Diagnostics.Process tmpproc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", tmppath) { UseShellExecute = false });
-                tmpproc.Close();  //this will still cause CSL to not fully release unless user closes notepad.
-
-                Configuration.SetSubredditList(File.ReadAllText(ConfigPath));
-            }
-            else
-            {
-
-            }
+            if (!System.IO.File.Exists(tmppath))
+                ChirpitConfig.CreateSubConfig();
+            System.Diagnostics.Process tmpproc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", tmppath) { UseShellExecute = false });
+            tmpproc.Close();  //this will still cause CSL to not fully release unless user closes notepad.
+            ChirpitConfig.SetSubredditList(File.ReadAllText(ConfigPath));
         }
 
         public void OnSettingsUI(UIHelperBase helper)
         {
-
+            ChirpitConfig config = Configuration<ChirpitConfig>.Load();
             UIHelper group = helper.AddGroup("Chirpit Rebooted") as UIHelper;
             UIPanel panel = group.self as UIPanel;
-            group.AddCheckbox("Enable automated hashtags", true, (isChecked) => Configuration.SetHashtagMode(isChecked));
+            group.AddCheckbox("Enable automated hashtags", config.Hashtags == 1, (isChecked) => config.SetHashtagMode(isChecked));
 
             UIDropDown customTagsFilePath = (UIDropDown)group.AddDropdown(
                 "Name Handling", 
@@ -67,8 +61,8 @@ namespace RedditClient
                     "Use CIM names instead of reddit usernames",
                     "Permanently rename CIMs to reddit users" 
                 }, 
-                0, 
-                (index) => Configuration.SetAssociationMode(index));
+                config.AssociationMode, 
+                (index) => config.SetAssociationMode(index));
             customTagsFilePath.width = panel.width - 30;
 
             UIDropDown filtersDropdown = (UIDropDown)group.AddDropdown(
@@ -78,8 +72,8 @@ namespace RedditClient
                     "Hide useless chirps",
                     "Hide all chirps"
                 },
-                0,
-                (index) => Configuration.SetFilterMessage(index));
+                config.FilterMessages,
+                (index) => config.SetFilterMessage(index));
             filtersDropdown.width = panel.width - 30;
 
             UIDropDown clickBehaviorDropdown = (UIDropDown)group.AddDropdown(
@@ -90,13 +84,17 @@ namespace RedditClient
                     "Open system browser",
                     "Nothing"
                  },
-                 0,
-                 (index) => Configuration.SetClickBehavior(index));
+                 config.ClickBehaviour,
+                 (index) => config.SetClickBehavior(index));
             clickBehaviorDropdown.width = panel.width - 30;
 
-            UITextField frequencyTextfield = (UITextField)group.AddTextfield("Frequency (seconds)", "60", (value) => Configuration.SetTimer(value), _ => { });
+            UITextField frequencyTextfield = (UITextField)group.AddTextfield(
+                "Frequency (seconds)",
+                config.TimerInSeconds.ToString(), 
+                (value) => config.SetTimer(value), _ => { }
+            );
 
-            UIButton configbutton = (UIButton)group.AddButton("Edit/View Subreddit List", () => OpenConfigFile());
+            UIButton configbutton = (UIButton)group.AddButton("Edit/View Subreddit List", () => OpenConfigFile(config));
 
             // group.AddSlider("My Slider", 0, 1, 0.01f, 0.5f, (value) => UnityEngine.Debug.Log(value));
             // group.AddDropdown("My Dropdown", new string[] { "First Entry", "Second Entry", "Third Entry" }, -1, (index) => Debug.Log(index));

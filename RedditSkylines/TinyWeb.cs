@@ -92,20 +92,25 @@ namespace RedditClient
             JsonObject response = PostString(args);
 
 
+            if (!response.ContainsKey("data"))
+                return null;
+
             JsonObject responseData = (JsonObject)response["data"];
+
+            if (!responseData.ContainsKey("children"))
+                return null;
+
             JsonArray responseChildren = (JsonArray)responseData["children"];
 
             if ( responseChildren.Count == 0)
-            {
                 return null;
-            }
 
             var list = new List<RedditPost>();
             foreach (object obj in responseChildren)
             {
                 JsonObject child = (JsonObject)obj;
                 JsonObject data = (JsonObject)child["data"];
-                UnityEngine.Debug.Log(data.ToString());
+                // UnityEngine.Debug.Log(data.ToString());
                 var post = createPost(data);
                 if (post != null)
                     list.Add(post);
@@ -114,25 +119,6 @@ namespace RedditClient
             
             
         }
-
-/*        public static string GetAnnouncement()
- *        
-        {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(string.Format(ANNOUNCEMENT_URL, ModInfo.Version));
-            request.Method = WebRequestMethods.Http.Get;
-
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            {
-                if (response.StatusCode != HttpStatusCode.OK)
-                    return null;
-
-                using (var sr = new StreamReader(response.GetResponseStream()))
-                {
-                    return sr.ReadLine();
-                }
-            }
-        }*/
-
         private static RedditPost createPost(JsonObject data)
         {
             // Any karma at all?

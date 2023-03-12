@@ -19,8 +19,8 @@ namespace RedditClient
             m_text = text;
             m_citizenId = citizenId;
             m_postId = postId;
-
-            if (Configuration.Hashtags > 0)
+            ChirpitConfig config = Configuration<ChirpitConfig>.Load();
+            if (config.Hashtags > 0)
                 HashtagThis();
         }
 

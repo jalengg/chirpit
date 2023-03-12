@@ -1,7 +1,8 @@
 {
   "ExpandedNodes": [
-    ""
+    "",
+    "\\RedditSkylines"
   ],
-  "SelectedNode": "\\RedditClient.sln",
+  "SelectedNode": "\\RedditSkylines\\RedditUpdater.cs",
   "PreviewInSolutionExplorer": false
 }

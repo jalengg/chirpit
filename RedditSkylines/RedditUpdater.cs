@@ -5,6 +5,7 @@ using ICities;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Timers;
@@ -27,7 +28,10 @@ namespace RedditClient
         private CitizenMessage lastCitizenMessage = null;
         public Message lastRedditMessage = null;
         private TinyWeb postFactory = null;
+        private bool goodPostFactory = false;
+        private ChirpitConfig config;
 
+        private static System.Random rng = new System.Random();
         private bool IsPaused
         {
             get
@@ -36,46 +40,71 @@ namespace RedditClient
             }
         }
 
-        public override void OnCreated(IChirper threading)
+        private void StartPostFactory()
         {
-                this.postFactory = new TinyWeb();
-                messageSound = Singleton<ChirpPanel>.instance.m_NotificationSound;
+            postfactoryRefreshTimer.Stop();
             try
             {
-                Configuration.SetSubredditList(File.ReadAllText(ModInfo.ConfigPath));
+                this.postFactory = new TinyWeb();
+                goodPostFactory = true;
+                postfactoryRefreshTimer.Interval = 5 * 60 * 1000;
+                Debug.Log(string.Format("Reddit: Oauth2 succeeded. Set interval to {0} seconds", postfactoryRefreshTimer.Interval/1000));
             }
             catch
             {
-                Configuration.CreateConfig();
+                if (goodPostFactory)
+                    postfactoryRefreshTimer.Interval = 30 * 1000;
+                goodPostFactory = false;
+                postfactoryRefreshTimer.Interval *= 2;
+                postfactoryRefreshTimer.Interval = Math.Min(postfactoryRefreshTimer.Interval, 5 * 60 * 1000);
+                Debug.Log(string.Format("Reddit: failed OAuth2. Set interval to {0} seconds", postfactoryRefreshTimer.Interval/1000));
+            }
+            postfactoryRefreshTimer.Start();
+        }
+
+
+        public override void OnCreated(IChirper threading)
+        {
+            Debug.Log("Reddit for Chipy v0.1.1");
+            this.config = Configuration<ChirpitConfig>.Load();
+            StartPostFactory();
+            messageSound = Singleton<ChirpPanel>.instance.m_NotificationSound;
+            try
+            {
+                ChirpitConfig.SetSubredditList(File.ReadAllText(ModInfo.ConfigPath));
+            }
+            catch
+            {
+                ChirpitConfig.CreateSubConfig();
             }
 
 
-                if (Configuration.Subreddits.Count >= 1)
+            if (ChirpitConfig.Subreddits.Count >= 1)
+            {
+                Debug.Log(string.Format("Reddit. Going to show a new message from one of {0} subreddits every {1} seconds (AssociationMode = {2})", ChirpitConfig.Subreddits.Count, config.TimerInSeconds, config.AssociationMode));
+                Debug.Log(string.Format("Reddit. list of subs loaded: {0}", ChirpitConfig.Subreddits.ToString()));
+                foreach (string subreddit in ChirpitConfig.Subreddits)
                 {
-                    Debug.Log(string.Format("Reddit. Going to show a new message from one of {0} subreddits every {1} seconds (AssociationMode = {2})", Configuration.Subreddits.Count, Configuration.TimerInSeconds, Configuration.AssociationMode));
-                    Debug.Log(string.Format("Reddit. list of subs loaded: {0}", Configuration.Subreddits.ToString()));
-                    foreach (string subreddit in Configuration.Subreddits)
-                    {
 
-                        Debug.Log(string.Format("reddit loaded subreddit: {0}", subreddit));
-                        if (!lastPostIds.ContainsKey(subreddit))
-                            lastPostIds.Add(subreddit, new Queue<string>());
-                    }
-
-                    timer.AutoReset = true;
-                    timer.Elapsed += new ElapsedEventHandler((sender, e) => UpdateRedditPosts());
-                    timer.Interval = Configuration.TimerInSeconds * 1000;
-                    timer.Start();
-
-                    postfactoryRefreshTimer.AutoReset = true;
-                    postfactoryRefreshTimer.Elapsed += new ElapsedEventHandler((sender, e) => { this.postFactory = new TinyWeb();  });
-                    postfactoryRefreshTimer.Interval = 5 * 60 * 1000;
-                    postfactoryRefreshTimer.Start();
+                    Debug.Log(string.Format("reddit loaded subreddit: {0}", subreddit));
+                    if (!lastPostIds.ContainsKey(subreddit))
+                        lastPostIds.Add(subreddit, new Queue<string>());
                 }
-                else
-                {
-                    Debug.Log("No subreddits configured.");
-                }
+
+                timer.AutoReset = true;
+                timer.Elapsed += new ElapsedEventHandler((sender, e) => UpdateRedditPosts());
+                timer.Interval = config.TimerInSeconds * 1000;
+                timer.Start();
+
+                postfactoryRefreshTimer.AutoReset = true;
+                postfactoryRefreshTimer.Elapsed += new ElapsedEventHandler((sender, e) => StartPostFactory());
+                postfactoryRefreshTimer.Interval = config.TimerInSeconds * 1000;
+                postfactoryRefreshTimer.Start();
+            }
+            else
+            {
+                Debug.Log("No subreddits configured.");
+            }
             
         }
 
@@ -93,10 +122,27 @@ namespace RedditClient
 
         private void UpdateRedditPosts()
         {
+            timer.Stop();
+            config = Configuration<ChirpitConfig>.Load();
+            timer.Interval = config.TimerInSeconds * 1000;
+            timer.Start();
+
             if (IsPaused)
             {
                 Debug.Log("[Reddit] called UpdateRedditPosts function but game was paused.");
                 return;
+            }
+
+            if (!goodPostFactory)
+            {
+                Debug.Log("[Reddit] postfactory not initialized successfully, trying again..");
+                StartPostFactory();
+                if (!goodPostFactory)
+                {
+                    Debug.Log("[Reddit] postfactory retry unsuccessful, trying again next interval..");
+                    return;
+                }
+
             }
 
             Debug.Log("[Reddit] called UpdateRedditPosts function");
@@ -105,21 +151,41 @@ namespace RedditClient
             //     return;
 
             // Pick a subreddit at random
-            string subreddit = Configuration.Subreddits[new System.Random().Next(Configuration.Subreddits.Count)];
+            List<String> subreddits = ChirpitConfig.Subreddits.OrderBy(async => rng.Next()).ToList();
 
-            if (subreddit.EndsWith("/"))
-                subreddit = subreddit.Substring(0, subreddit.Length - 1);
+            IEnumerable<RedditPost> newestPosts = null;
+            Queue<string> lastPostId = new Queue<string>();
 
-            Debug.Log(string.Format("[Reddit] picked subreddit at random: {0}", subreddit));
-            try
-            {
-                // Remove posts that are no longer checked against; plus some for possible deletions
-                Queue<string> lastPostId = lastPostIds[subreddit];
+            string subreddit = null;
+            int lastIndex = Math.Min(subreddits.ToArray().Length, 3);
+
+            foreach (String s in subreddits.GetRange(0,lastIndex)) {
+                if (s.EndsWith("/"))
+                    subreddit = s.Substring(0, s.Length - 1);
+                else
+                    subreddit = s;
+
+                Debug.Log(string.Format("[Reddit] picked subreddit at random: {0}", subreddit));
+                lastPostId = lastPostIds[subreddit];
+
                 while (lastPostId.Count > MAX_CACHED_REDDIT_POSTS_PER_SUBREDDIT)
                     lastPostId.Dequeue();
 
                 // Fetch a number of latest posts
-                IEnumerable<RedditPost> newestPosts = postFactory.FindLastPosts(subreddit);
+                newestPosts = postFactory.FindLastPosts(subreddit);
+                if (newestPosts != null)
+                    break;
+            }
+            if (newestPosts is null)
+            {
+                Debug.Log("[Reddit] None of the configured subreddits had any posts");
+                return;
+            }
+
+            try
+            {
+                // Remove posts that are no longer checked against; plus some for possible deletions
+                
                 foreach (RedditPost newestPost in newestPosts)
                 {
                     // Find the first one we haven't shown yet
@@ -141,16 +207,17 @@ namespace RedditClient
 
         private CitizenInfo LookupOrRenameCitizenID(string name)
         {
+            
             if (!string.IsNullOrEmpty(name))
             {
-                if (Configuration.AssociationMode == 1)
+                if (config.AssociationMode == 1)
                 {
                     // Use any citizen's name. Not necessarily consistent in and of itself, in that the same person may show up as multiple actual CIMs.
                     uint id = MessageManager.instance.GetRandomResidentID();
                     if (id != 0u)
                         return new CitizenInfo { ID = id, Name = CitizenManager.instance.GetCitizenName(id) };
                 }
-                else if (Configuration.AssociationMode == 2)
+                else if (config.AssociationMode == 2)
                 {
                     // Overwrite any CIM's name by their reddit username.
                     // To be fair: this was the more interesting part.
@@ -259,7 +326,7 @@ namespace RedditClient
                 // Other mouse flags, like .Right seem to have no effect anyway.
                 string url = string.Format("https://reddit.com/{0}", postId);
 
-                switch (Configuration.ClickBehaviour)
+                switch (config.ClickBehaviour)
                 {
                     case 0:
                         // Open Steam Overlay
@@ -285,9 +352,9 @@ namespace RedditClient
 
         private bool ShouldFilter(string p)
         {
-            if (Configuration.FilterMessages >= 2)
+            if (config.FilterMessages >= 2)
                 return true;
-            if (Configuration.FilterMessages == 0)
+            if (config.FilterMessages == 0)
                 return false;
 
             switch (p)
@@ -327,37 +394,46 @@ namespace RedditClient
                 return;
 
             // This code is roughly based on the work by Juuso "Zuppi" Hietala.
-            Debug.Log("REDDIT: Calling OnUpdate");
-            var container = ChirpPanel.instance.transform.FindChild("Chirps").FindChild("Clipper").FindChild("Container").gameObject.transform;
-            for (int i = 0; i < container.childCount; ++i)
+            // Debug.Log("REDDIT: Calling OnUpdate");
+            try
             {
-                var elem = container.GetChild(i);
-                Debug.Log(string.Format("Looping through child {0}: {1}", i, elem.ToString()));
-                var label = elem.GetComponentInChildren<UILabel>();
-                if (lastRedditMessage != null)
-                {
-                    if (label.text.Equals(lastRedditMessage.GetText()) && string.IsNullOrEmpty(label.stringUserData))
-                    {
-                        label.stringUserData = lastRedditMessage.GetPostID();
-                        label.eventClick += ClickRedditChirp;
+                var container = ChirpPanel.instance.transform.FindChild("Chirps").FindChild("Clipper").FindChild("Container").gameObject.transform;
+            
 
-                        lastRedditMessage = null;
+                for (int i = 0; i < container.childCount; ++i)
+                {
+                    var elem = container.GetChild(i);
+                    // Debug.Log(string.Format("Looping through child {0}: {1}", i, elem.ToString()));
+                    var label = elem.GetComponentInChildren<UILabel>();
+                    if (lastRedditMessage != null)
+                    {
+                        if (label.text.Equals(lastRedditMessage.GetText()) && string.IsNullOrEmpty(label.stringUserData))
+                        {
+                            label.stringUserData = lastRedditMessage.GetPostID();
+                            label.eventClick += ClickRedditChirp;
+
+                            lastRedditMessage = null;
+                        }
+                    }
+
+                    if (lastCitizenMessage != null)
+                    {
+                        if (label.text.Equals(lastCitizenMessage.GetText()))
+                        {
+                            ChirpPanel.instance.m_NotificationSound = messageSound;
+
+                            UITemplateManager.RemoveInstance("ChirpTemplate", elem.GetComponent<UIPanel>());
+                            MessageManager.instance.DeleteMessage(lastCitizenMessage);
+                            lastCitizenMessage = null;
+
+                            ChirpPanel.instance.Collapse();
+                        }
                     }
                 }
-
-                if (lastCitizenMessage != null)
-                {
-                    if (label.text.Equals(lastCitizenMessage.GetText()))
-                    {
-                        ChirpPanel.instance.m_NotificationSound = messageSound;
-
-                        UITemplateManager.RemoveInstance("ChirpTemplate", elem.GetComponent<UIPanel>());
-                        MessageManager.instance.DeleteMessage(lastCitizenMessage);
-                        lastCitizenMessage = null;
-
-                        ChirpPanel.instance.Collapse();
-                    }
-                }
+            }
+            catch
+            {
+                return;
             }
         }
 

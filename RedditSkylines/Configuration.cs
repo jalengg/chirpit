@@ -1,108 +1,84 @@
-﻿using ColossalFramework.IO;
-using System;
-using System.Collections.Generic;
+﻿using System;
+using System.Linq;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Xml.Serialization;
+using UnityEngine;
 
-namespace RedditClient
+public abstract class Configuration<C> where C : class, new()
 {
-    internal class Configuration
+    private static C instance;
+
+    public static C Load()
     {
-
-        public static List<string> Subreddits;
-        public static int TimerInSeconds = 300;
-        public static int AssociationMode = 0;
-        public static int Hashtags = 0;
-        public static int ClickBehaviour = 0;
-
-        public static int FilterMessages = 0;
-        public static int LastAnnouncement = 0;
-
-
-        internal static void SetTimer(string val)
+        if (instance == null)
         {
-            int newTimer = -1;
-            if (Int32.TryParse(val, out newTimer) && newTimer >= 10)
-            {
-                TimerInSeconds = newTimer;
-            }
-        }
-
-        internal static void SetAssociationMode(int val)
-        {
-            AssociationMode = val;
-        }
-
-        internal static void SetHashtagMode(bool val)
-        {
-            Hashtags = val ? 1 : 0;
-        }
-
-        internal static void SetFilterMessage(int val)
-        {
-            FilterMessages = val;
-        }
-        internal static void SetClickBehavior(int val)
-        {
-            ClickBehaviour = val;
-        }
-
-        internal static void SetSubredditList(string val)
-        {
+            var configPath = GetConfigPath();
+            XmlSerializer xmlSerializer = new XmlSerializer(typeof(C));
             try
             {
-                Subreddits = new List<string>();
-                string[] lines = val.Split(
-                    new string[] { "\r\n", "\r", "\n" },
-                    StringSplitOptions.None
-                );
-                for (int i = 0; i < lines.Length; ++i)
+                if (File.Exists(configPath))
                 {
-                    string line = lines[i];
-                    if (line.Length > 0)
+                    using (StreamReader streamReader = new System.IO.StreamReader(configPath))
                     {
-                        if (line.IndexOf('/') == -1)
-                        {
-                            line = string.Format("/r/{0}/new", line);
-                        }
-                        Subreddits.Add(line);
+                        instance = xmlSerializer.Deserialize(streamReader) as C;
                     }
                 }
             }
-            catch
+            catch (Exception e)
             {
-                Subreddits = DefaultSubreddits;
-                CreateConfig();
+                Debug.LogException(e);
+                instance = null;
             }
         }
-
-        public static List<string> DefaultSubreddits
-        {
-            get
-            {
-                var s = new List<string>();
-                s.Add("/r/ShowerThoughts/rising");
-                s.Add("/r/CrazyIdeas/new");
-                s.Add("/r/ChirpIt/new");
-                s.Add("/r/AskReddit/rising");
-                s.Add("/r/CitiesSkylines/rising");
-                s.Add("/r/News/rising");
-                s.Add("/r/DoesAnybodyElse/rising");
-                return s;
-            }
-        }
-
-        internal static void CreateConfig()
-        {
-            using (StreamWriter sw = File.AppendText(ModInfo.ConfigPath))
-            {
-                foreach (string sub in DefaultSubreddits)
-                {
-                    sw.WriteLine(sub);
-                }
-            }
-            Subreddits = DefaultSubreddits;
-        }
-
+        return instance ?? (instance = new C());
     }
+
+    public static void Save()
+    {
+        if (instance == null) return;
+
+        var configPath = GetConfigPath();
+
+        var xmlSerializer = new XmlSerializer(typeof(C));
+        var noNamespaces = new XmlSerializerNamespaces();
+        noNamespaces.Add("", "");
+        try
+        {
+            using (var streamWriter = new System.IO.StreamWriter(configPath))
+            {
+                xmlSerializer.Serialize(streamWriter, instance, noNamespaces);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
+    }
+
+    private static string GetConfigPath()
+    {
+        var configPathAttribute = typeof(C).GetCustomAttributes(typeof(ConfigurationPathAttribute), true)
+            .FirstOrDefault() as ConfigurationPathAttribute;
+
+        if (configPathAttribute != null)
+        {
+            return configPathAttribute.Value;
+        }
+        else
+        {
+            Debug.LogError("ConfigurationPath attribute missing in " + typeof(C).Name);
+            return typeof(C).Name + ".xml";
+        }
+    }
+}
+
+[AttributeUsage(AttributeTargets.Class)]
+public class ConfigurationPathAttribute : Attribute
+{
+    public ConfigurationPathAttribute(string value)
+    {
+        Value = value;
+    }
+
+    public string Value { get; private set; }
 }
